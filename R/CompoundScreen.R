@@ -337,4 +337,38 @@ check_wells <- function(df) {
   df_plate_pos$z_plate_pos <- calculate_z_score(df_plate_pos, 1)
 }
 
+build_similarity_network <- function(sim_df, threshold = 0.4, k = 4) {
+  sim_matrix <- as.matrix(sim_df)
+  labels <- rownames(sim_matrix)
+  
+  dist_matrix <- as.dist(1 - sim_matrix)
+  hc <- hclust(dist_matrix, method = "average")
+  clusters <- cutree(hc, k = k)
+  
+  nodes <- data.frame(
+    id = labels,
+    label = labels,
+    group = paste0("Cluster ", clusters[labels]),
+    stringsAsFactors = FALSE
+  )
+  
+  n <- nrow(sim_matrix)
+  edge_list <- list()
+  for (i in seq_len(n - 1)) {
+    for (j in seq((i + 1), n)) {
+      sim_val <- sim_matrix[i, j]
+      if (sim_val > threshold) {
+        edge_list[[length(edge_list) + 1]] <- data.frame(
+          from = labels[i],
+          to = labels[j],
+          value = sim_val,   # controls edge thickness
+          title = paste0("Tanimoto: ", round(sim_val, 2))  # hover tooltip
+        )
+      }
+    }
+  }
+  edges <- do.call(rbind, edge_list)
+  
+  list(nodes = nodes, edges = edges)
+}
 

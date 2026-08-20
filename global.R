@@ -4,7 +4,7 @@ required_packages <- c("shiny", "bslib", "readxl", "tibble",
                        "webchem", "shinyFiles", "patchwork",
                        "purrr", "stringr", "scales", "stats", 
                        "viridis", "growthcurver", "reticulate",
-                       "heatmaply", "plotly") 
+                       "heatmaply", "plotly", "visNetwork") 
 
 for (pkg in required_packages) suppressMessages(library(pkg, character.only = TRUE))
 

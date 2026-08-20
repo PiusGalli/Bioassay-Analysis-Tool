@@ -4,11 +4,11 @@ from rdkit.Chem import rdFingerprintGenerator
 import numpy as np
 import pandas as pd
 
-def draw_smiles(smiles):
+def draw_smiles(smiles, w=300, h=200):
   mol = Chem.MolFromSmiles(smiles)
   if mol is None:
       return None
-  d = rdMolDraw2D.MolDraw2DSVG(300, 200)
+  d = rdMolDraw2D.MolDraw2DSVG(w, h)
   d.DrawMolecule(mol)
   d.FinishDrawing()
   return d.GetDrawingText()
@@ -57,6 +57,6 @@ def run_similarity_pipeline(smiles_list, labels, radius=2, nBits=1024):
     return {
         "similarity_matrix": sim_matrix,
         "failed_indices": failed_indices,
-        "n_valid": len(valid_mols)
+        "valid_mols": valid_mols
     }
 

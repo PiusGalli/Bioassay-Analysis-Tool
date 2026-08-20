@@ -48,6 +48,7 @@ mod_nanobit_ui <- function(id, label = "NanoBiT") {
       ),
       mainPanel(
         navset_card_underline(
+          id = ns("active_tab"),
           nav_spacer(),
           nav_panel("Processed",
                     radioButtons(ns("plotVar"), label = NULL, inline = TRUE,
@@ -75,7 +76,7 @@ mod_nanobit_ui <- function(id, label = "NanoBiT") {
                     ),
                     card(
                       helpText("Z-score/Z threshold: ≥2 very permissive (many false positives), ≥3 common/moderate, ≥4–5 stringent (good for validation), ≥6–7 very stringent (only the strongest hits).")
-                    )
+                    ), value = "processed"
           ),
           nav_panel("Plates",
                     layout_columns(
@@ -91,11 +92,13 @@ mod_nanobit_ui <- function(id, label = "NanoBiT") {
                       <b>0–0.5</b> marginal; usable with caution, more false positives<br>
                       <b>below 0</b> controls overlap, plate unreliable"
                     )),
-                    plotOutput(ns("platePlot"))
+                    plotOutput(ns("platePlot")),
+                    value = "plates"
           ),
           nav_panel("Similarity",
                     actionButton(ns("calc_similarity"), label = "Calculate Similarity of Hits", class = "btn-primary", width = "100%"),
-                    plotlyOutput(ns("hc_clust"))
+                    visNetworkOutput(ns("hc_clust")),
+                    value = "similarity"
           ),
           
         ),
@@ -137,6 +140,8 @@ mod_nanobit_server <- function(id) {
     smiles_val <- reactiveVal(NULL)
     qc_messages <- reactiveVal(list())
     results_similarity <- reactiveVal(NULL)
+    smiles_df <- reactiveVal(NULL)
+    selected_neighbors <- reactiveVal(NULL)
     
     var <- reactive({
       if (input$plotVar == 1) {
@@ -350,9 +355,6 @@ mod_nanobit_server <- function(id) {
       smiles <- resolve_smiles(name)
       
       req(!is.na(smiles))
-      #structure_url(
-      #  paste0("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/", URLencode(smiles, reserved = TRUE), "/PNG?image_size=500x500&bgcolor=white")
-      #)
       
       smiles_val(smiles)
     })
@@ -364,22 +366,35 @@ mod_nanobit_server <- function(id) {
     
     # Output picture of Structure
     output$structure <- renderUI({
-      #req(structure_url())
-      req(smiles_val())
-      #div(
-      #  style = "text-align: center;",
-      #  tags$img(src = structure_url(), width = "50%"),
-      #  tags$p(smiles_val(), style = "font-family: monospace; word-break: break-all; font-size: 10px;")
-      #)
-      #source_python(file.path("Python", "cheminformatics.py"))
-      svg <- draw_smiles(smiles_val())
-      div(
-        style = "text-align: center;", 
-        HTML(svg),
-        tags$p(smiles_val(), style = "font-family: monospace; word-break: break-all; font-size: 10px;")
-      )
+      if (input$active_tab == "processed") {
+        req(smiles_val())
+        svg <- draw_smiles(smiles_val())
+        div(
+          style = "text-align: center;", 
+          HTML(svg),
+          tags$p(smiles_val(), style = "font-family: monospace; word-break: break-all; font-size: 10px;")
+        )
+        
+      } else if (input$active_tab == "similarity") {
+        req(selected_neighbors())
+        df <- selected_neighbors()
+        req(nrow(df) > 0)
+        
+        div(
+          style = "display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start;",
+          lapply(seq_len(nrow(df)), function(i) {
+            svg <- draw_smiles(df$SMILES[i], w = 100L, h = 66L)
+            div(
+              style = "text-align: center; flex: 0 0 auto; width: 110px;",
+              HTML(svg),
+              tags$p(df$CatalogID[i], style = "font-family: monospace; font-size: 10px; margin-top: 2px;")
+            )
+          })
+        )
+      } else {
+        NULL  # e.g. "Plates" tab - nothing to show
+      }
     })
-    
     #################
     ### Download
     #################
@@ -515,38 +530,54 @@ mod_nanobit_server <- function(id) {
       })
       
       labels <- df_sub$CatalogID
+      names(smiles_list) <- labels
       
       pipeline_result <- run_similarity_pipeline(smiles_list, labels, radius=2L, nBits=1024L)
       
-      results_similarity(pipeline_result) 
+      results_similarity(pipeline_result)
+      smiles_df(data.frame(CatalogID = names(smiles_list),
+                           SMILES = smiles_list))
     })
+    
     
     hc_clust_plot <- reactive({
       req(results_similarity())
-      
-      sim_df <- results_similarity()$similarity_matrix
-      sim_matrix <- as.matrix(sim_df)
-      
-      dist_matrix <- as.dist(1-sim_matrix)
-      
-      hc <- hclust(dist_matrix, method = "average")
-      
-      k <- 4
-      clusters <- cutree(hc, k=k)
-      
-      heatmaply(
-        sim_matrix,
-        Rowv = as.dendrogram(hc),
-        Colv = as.dendrogram(hc),
-        k_row = k,
-        k_col = k,
-        colors = viridis::viridis(256),
-        main = "Compound similarity (Tanimoto)"
-      )
+      build_similarity_network(results_similarity()$similarity_matrix, threshold = 0.4, k = 4)
     })
     
-    output$hc_clust <- renderPlotly({
-      hc_clust_plot()
+    output$hc_clust <- renderVisNetwork({
+      net <- hc_clust_plot()
+      
+      visNetwork(net$nodes, net$edges) %>%
+        visNodes(shape = "dot", size = 20) %>%
+        visEdges(smooth = FALSE, scaling = list(min = 1, max = 8)) %>%
+        visGroups() %>% 
+        visOptions(highlightNearest = TRUE, selectedBy = "group") %>%
+        visPhysics(stabilization = list(enabled = TRUE, iterations = 200), solver = "forceAtlas2Based") %>%
+        visEvents(
+          stabilizationIterationsDone = "function() { this.setOptions({physics: false}); }",
+          click = "function(nodes) {
+        Shiny.setInputValue('nanobit-hc_clust_click', nodes.nodes[0], {priority: 'event'});
+      }"
+        )
+    })
+    
+    observeEvent(input$hc_clust_click, {
+      clicked_id <- input$hc_clust_click
+      req(clicked_id)
+      
+      net <- hc_clust_plot()
+      edges <- net$edges
+      
+      neighbor_edges <- subset(edges, from == clicked_id | to == clicked_id)
+      neighbors <- unique(c(
+        neighbor_edges$to[neighbor_edges$from == clicked_id],
+        neighbor_edges$from[neighbor_edges$to == clicked_id]
+      ))
+      cluster_members <- c(clicked_id, neighbors)
+      
+      filtered_smiles <- subset(smiles_df(), CatalogID %in% cluster_members)
+      selected_neighbors(filtered_smiles)
     })
 })}
 
