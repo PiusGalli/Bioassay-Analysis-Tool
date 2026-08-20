@@ -9,6 +9,7 @@ An R Shiny app for the analysis, quality control, and exploration of 384-well pl
 - Analysis of 384-well plate compound screening data
 - Quality control checks and diagnostics
 - Interactive data exploration
+- Compound Similarity calculation
 ## Roadmap
  
 More features are planned and actively being developed. Stay tuned.
