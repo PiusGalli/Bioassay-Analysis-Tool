@@ -48,7 +48,6 @@ mod_nanobit_ui <- function(id, label = "NanoBiT") {
       ),
       mainPanel(
         navset_card_underline(
-          title = "Plot",
           nav_spacer(),
           nav_panel("Processed",
                     radioButtons(ns("plotVar"), label = NULL, inline = TRUE,
@@ -94,6 +93,10 @@ mod_nanobit_ui <- function(id, label = "NanoBiT") {
                     )),
                     plotOutput(ns("platePlot"))
           ),
+          nav_panel("Similarity",
+                    actionButton(ns("calc_similarity"), label = "Calculate Similarity of Hits", class = "btn-primary", width = "100%"),
+                    plotlyOutput(ns("hc_clust"))
+          ),
           
         ),
         card(
@@ -133,6 +136,7 @@ mod_nanobit_server <- function(id) {
     structure_url <- reactiveVal(NULL)
     smiles_val <- reactiveVal(NULL)
     qc_messages <- reactiveVal(list())
+    results_similarity <- reactiveVal(NULL)
     
     var <- reactive({
       if (input$plotVar == 1) {
@@ -472,6 +476,77 @@ mod_nanobit_server <- function(id) {
               tags$b("QC warnings"),
               tags$ul(lapply(warns, function(m) tags$li(m$text))))
       )
+    })
+    
+    #################
+    ### Calculate Similarities
+    #################
+    
+    observeEvent(input$calc_similarity, {
+      req(matched_data())
+      
+      df <- matched_data()
+      
+      z_dmso <- input$z.DMSO
+      z_pos <- input$z.POS
+      rel_lum <- input$rel.lum
+      number_hits <- input$number.hits
+      
+      if (number_hits == 0) {
+        if (var() == "rel.luminescence") {
+          df_sub <- subset(df, df$robust_z_dmso > z_dmso & df$rel.luminescence > rel_lum)
+        } else {
+          df_sub <- subset(df, df$robust_z_pos > z_pos & df$to.positive > rel_lum)
+        }
+      } else {
+        df <- df[order(df[[var()]], decreasing = TRUE), ]
+        df_sub <- df[1:number_hits, ]
+      }
+      
+      n <- nrow(df_sub)
+      
+      smiles_list <- character(n)
+      
+      withProgress(message = "Resolving SMILES...", value = 0, {
+        for (i in seq_len(n)) {
+          smiles_list[i] <- resolve_smiles(df_sub$Name[i])
+          incProgress(1/n, detail = paste(i, "of", n))
+        }
+      })
+      
+      labels <- df_sub$CatalogID
+      
+      pipeline_result <- run_similarity_pipeline(smiles_list, labels, radius=2L, nBits=1024L)
+      
+      results_similarity(pipeline_result) 
+    })
+    
+    hc_clust_plot <- reactive({
+      req(results_similarity())
+      
+      sim_df <- results_similarity()$similarity_matrix
+      sim_matrix <- as.matrix(sim_df)
+      
+      dist_matrix <- as.dist(1-sim_matrix)
+      
+      hc <- hclust(dist_matrix, method = "average")
+      
+      k <- 4
+      clusters <- cutree(hc, k=k)
+      
+      heatmaply(
+        sim_matrix,
+        Rowv = as.dendrogram(hc),
+        Colv = as.dendrogram(hc),
+        k_row = k,
+        k_col = k,
+        colors = viridis::viridis(256),
+        main = "Compound similarity (Tanimoto)"
+      )
+    })
+    
+    output$hc_clust <- renderPlotly({
+      hc_clust_plot()
     })
 })}
 
